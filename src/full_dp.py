@@ -1,74 +1,110 @@
-import itertools
 import numpy as np
+from numba import njit
 
-MATCH, MISMATCH, SKIP = 2, -2, -1
+MATCH, MISMATCH, SKIP = 2, -2, -2
+NEG = -(2 ** 30)                                   # "minus infinity" for int32
 
-def step_score(bases, n_skip):
-    """Score of one step: bases = bases of the sequences that advance."""
+# The 7 moves: (a, b, d) = which of X, Y, Z advance
+MA = np.array([1, 0, 0, 1, 1, 0, 1], dtype=np.int64)
+MB = np.array([0, 1, 0, 1, 0, 1, 1], dtype=np.int64)
+MD = np.array([0, 0, 1, 0, 1, 1, 1], dtype=np.int64)
+
+
+@njit(cache=True)
+def _step(bx, by, bz, a, b, d):
+    """Step score: same rule as step_score() in the Python DP."""
+    n = a + b + d
     s = 0
-    if len(bases) >= 2:
-        s = MATCH * (len(bases) - 1) if len(set(bases)) == 1 else MISMATCH
-    return s + SKIP * n_skip
+    if n >= 2:
+        if n == 3:
+            same = (bx == by) and (by == bz)
+        elif a and b:
+            same = bx == by
+        elif a and d:
+            same = bx == bz
+        else:
+            same = by == bz
+        s = MATCH * (n - 1) if same else MISMATCH
+    return s + SKIP * (3 - n)
 
 
-def nd_dp(seqs):
+@njit(cache=True)
+def _fill(x, y, z):
+    nx, ny, nz = len(x), len(y), len(z)
+    D = np.full((nx + 1, ny + 1, nz + 1), NEG, dtype=np.int32)
+    ptr = np.full((nx + 1, ny + 1, nz + 1), -1, dtype=np.int8)
+    D[0, 0, 0] = 0
+
+    for i in range(nx + 1):
+        for j in range(ny + 1):
+            for l in range(nz + 1):
+                if i == 0 and j == 0 and l == 0:
+                    continue
+                best = NEG
+                best_m = -1
+                for m in range(7):
+                    a, b, d = MA[m], MB[m], MD[m]
+                    pi, pj, pl = i - a, j - b, l - d
+                    if pi < 0 or pj < 0 or pl < 0:
+                        continue
+                    prev = D[pi, pj, pl]
+                    if prev == NEG:
+                        continue
+                    bx = x[i - 1] if a else 0
+                    by = y[j - 1] if b else 0
+                    bz = z[l - 1] if d else 0
+                    val = prev + _step(bx, by, bz, a, b, d)
+                    if val > best:
+                        best = val
+                        best_m = m
+                D[i, j, l] = best
+                ptr[i, j, l] = best_m
+    return D, ptr
+
+
+@njit(cache=True)
+def _traceback(ptr, nx, ny, nz):
+    """Moves from the end cell back to the origin, in forward order."""
+    moves = np.empty(nx + ny + nz, dtype=np.int8)
+    n = 0
+    i, j, l = nx, ny, nz
+    while i > 0 or j > 0 or l > 0:
+        m = ptr[i, j, l]
+        moves[n] = m
+        n += 1
+        i -= MA[m]
+        j -= MB[m]
+        l -= MD[m]
+    return moves[:n][::-1]
+
+
+def dp3(x, y, z):
     """
-    Exact N-dimensional DP over len(seqs) sequences.
-    Returns (optimal score, MSA rows with '-', path of cells from origin to end).
+    Exact 3D DP (Numba). Returns (optimal score, MSA rows with '-', path of cells).
+    Memory: 5 bytes per cell (int32 scores + int8 pointers).
     """
-    n = len(seqs)
-    shape = tuple(len(s) + 1 for s in seqs)
-    moves = [m for m in itertools.product((0, 1), repeat=n) if any(m)]   # 2^N - 1 moves
+    ex = np.frombuffer(x.encode(), dtype=np.uint8)
+    ey = np.frombuffer(y.encode(), dtype=np.uint8)
+    ez = np.frombuffer(z.encode(), dtype=np.uint8)
 
-    D = np.full(shape, -np.inf)
-    ptr = np.full(shape, -1, dtype=np.int16)
-    D[(0,) * n] = 0
+    D, ptr = _fill(ex, ey, ez)
+    score = int(D[len(x), len(y), len(z)])
+    moves = _traceback(ptr, len(x), len(y), len(z))
 
-    # itertools.product visits cells in lexicographic order,
-    # so every predecessor is filled before the cell that needs it
-    for cell in itertools.product(*(range(s) for s in shape)):
-        if not any(cell):
-            continue
-        best, best_m = -np.inf, -1
-        for mi, m in enumerate(moves):
-            prev = tuple(c - d for c, d in zip(cell, m))
-            if min(prev) < 0:
-                continue
-            bases = [seqs[k][cell[k] - 1] for k in range(n) if m[k]]
-            val = D[prev] + step_score(bases, n - sum(m))
-            if val > best:
-                best, best_m = val, mi
-        D[cell] = best
-        ptr[cell] = best_m
+    rows = [[], [], []]
+    path = [(0, 0, 0)]
+    i = j = l = 0
+    for m in moves:
+        a, b, d = MA[m], MB[m], MD[m]
+        rows[0].append(x[i] if a else "-")
+        rows[1].append(y[j] if b else "-")
+        rows[2].append(z[l] if d else "-")
+        i, j, l = i + a, j + b, l + d
+        path.append((i, j, l))
 
-    # Traceback from the final cell
-    end = tuple(s - 1 for s in shape)
-    cell, cols, path = end, [], [end]
-    while any(cell):
-        m = moves[ptr[cell]]
-        cols.append([seqs[k][cell[k] - 1] if m[k] else "-" for k in range(n)])
-        cell = tuple(c - d for c, d in zip(cell, m))
-        path.append(cell)
-    cols.reverse()
-    path.reverse()
-    msa = ["".join(col[k] for col in cols) for k in range(n)]
-
-    return D[end], msa, path
+    return score, ["".join(r) for r in rows], path
 
 
-def consensus(msa):
-    """Majority base per column; columns where most rows are '-' are dropped."""
-    out = []
-    for col in zip(*msa):
-        bases = [b for b in col if b != "-"]
-        if len(bases) > len(col) / 2:
-            out.append(max(set(bases), key=bases.count))
-    return "".join(out)
-
-
-seqs = ["CTATAGAGTA", "ATTATGAGTC", "CTATTGAGTA"]
-score, msa, path = nd_dp(seqs)
-print("Optimal score:", score)
-for row in msa:
-    print(row)
-print("Consensus:", consensus(msa))
+def dp3_memory_gb(lx, ly, lz):
+    """Memory needed for a DP of these lengths, in GB."""
+    return 5 * (lx + 1) * (ly + 1) * (lz + 1) / 1e9

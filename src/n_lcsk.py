@@ -141,25 +141,3 @@ def max_k(x, y, z, k_min=2, min_anchors=1):
         if len(path_to_anchors(path, k)) >= min_anchors:
             return k
     return None
-
-
-# ---------------------------------------------------------------------------
-# Example
-# ---------------------------------------------------------------------------
-
-x, y, z = "CTATAGAGTA", "ATTATGAGTC", "CTATTGAGTA"
-k = 2
-
-m3 = three_way_matches(x, y, z, k)
-print("3-way matches:", m3)
-print("Pair-only matches:", pair_only_matches(x, y, z, k, m3))
-
-score, path = lcskpp_3way(x, y, z, k, m3)
-anchors = path_to_anchors(path, k)
-print("LCSk++ score:", score)
-print("Path:", path)
-print("Anchors (i, j, l, length):", anchors)
-for (xs, xe), (ys, ye), (zs, ze) in unanchored_regions(x, y, z, anchors):
-    print("Region:", x[xs:xe] or "-", y[ys:ye] or "-", z[zs:ze] or "-")
-
-print("Maximal k (>= 2 anchors):", max_k(x, y, z, min_anchors=2))

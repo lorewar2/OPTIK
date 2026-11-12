@@ -198,15 +198,3 @@ def build_feature_table(fasta_file):
         rows.append(f)
 
     return pd.DataFrame(rows)[["set_id"] + FEATURE_NAMES]
-
-
-# ---------------------------------------------------------------------------
-# Example
-# ---------------------------------------------------------------------------
-
-feats = extract_features("CTATAGAGTA", "ATTATGAGTC", "CTATTGAGTA", depth=0, k_min=2)
-for name in FEATURE_NAMES:
-    print(f"{name:>24}: {feats[name]}")
-
-# table = build_feature_table("sequences.fasta")
-# table.to_csv("features.csv", index=False)

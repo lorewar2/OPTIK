@@ -17,8 +17,3 @@ def score_msa(msa):
         if bases:                                   # skip all-gap columns
             total += step_score(bases, len(col) - len(bases))
     return total
-
-seqs = ["CTATAGAGTA", "ATTATGAGTC", "CTATTGAGTA"]
-consensus, msa = spoa.poa(seqs)
-print("POA consensus:", consensus)
-print("POA score (our scoring):", score_msa(msa))
