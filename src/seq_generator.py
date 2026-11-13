@@ -101,6 +101,6 @@ def write_fasta(filename, records):
 records = []
 number_of_sequences = 10_000
 for set_id in range(1, 1 + number_of_sequences):
-    length = random.randint(20, 2_000)
+    length = random.randint(20, 500)
     records += generate_set(set_id, length)
 write_fasta("./data/sequences.fasta", records)

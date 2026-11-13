@@ -13,7 +13,7 @@ from feature_extractor import extract_features, read_fasta
 V_MAX = 1e10          # largest DP volume (cells) per run; 1e10 cells = 50 GB
 K_MIN = 4            # smallest k allowed for anchors
 MIN_ANCHORS = 1      # anchors required at the maximal k
-N_WORKERS = 10       # parallel processes; keep N_WORKERS * 5 * V_MAX bytes below your RAM
+N_WORKERS = 32       # parallel processes; keep N_WORKERS * 5 * V_MAX bytes below your RAM
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +169,11 @@ def init_worker():
 
 def make_data(fasta_file="sequences.fasta", out_file="results.csv", n_workers=N_WORKERS):
     sets = {}
+    index = 0
     for name, seq in read_fasta(fasta_file):
+        index += 1
+        if index < 20_000:
+            continue
         set_id, tag = name.split("-", 1)
         if tag != "original":
             sets.setdefault(set_id, []).append(seq)
