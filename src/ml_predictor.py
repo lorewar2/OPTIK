@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.model_selection import GroupShuffleSplit
 from sklearn.metrics import mean_absolute_error, r2_score
+import io
+from PIL import Image
 
 from feature_extractor import FEATURE_NAMES, extract_features, to_vector
 
@@ -19,14 +21,21 @@ POA_SIMD_SPEEDUP = 8.0     # assumed SPOA SIMD speedup; no-SIMD POA time = measu
 SEED = 42
 
 METHODS = ["DP", "POA", "SECTION", "OPTIK"]
-LABELS = {"DP": "Full DP", "POA": "POA (no-SIMD est.)", "SECTION": "LCSk++ sectioning", "OPTIK": "OPTIK (ML)"}
-COLORS = {"DP": "#2a78d6", "POA": "#e07b00", "SECTION": "#3a9a3a", "OPTIK": "#7b4fc9"}
-SIZES = [20, 100, 500, 1000]
+LABELS = {"DP": "Full DP", "POA": "POA", "SECTION": "LCSk++ sectioning", "OPTIK": "OPTIK (ML)"}
+
+# Colours chosen to differ in lightness, so they stay distinct in greyscale
+COLORS = {"DP": "#1f4e9c", "POA": "#f4b860", "SECTION": "#7fbf7f", "OPTIK": "#5b2c83"}
+# Patterns and markers carry identity without colour (black-and-white print)
+HATCHES = {"DP": "", "POA": "///", "SECTION": "...", "OPTIK": "xxx"}
+MARKERS = {"DP": "s", "POA": "^", "SECTION": "D", "OPTIK": "o"}
+
+SIZES = [20, 100, 500]
 BIN_LABELS = {20: "≤20", 100: "21–100", 500: "101–500", 1000: "501–1000"}
 
 plt.rcParams.update({"font.size": 10, "axes.spines.top": False, "axes.spines.right": False,
                      "axes.grid": True, "grid.color": "#e1e0d9", "grid.linewidth": 0.6,
-                     "axes.axisbelow": True, "savefig.dpi": 300})
+                     "axes.axisbelow": True, "savefig.dpi": 300,
+                     "hatch.linewidth": 0.6, "hatch.color": "black"})
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +59,7 @@ def load_results(path=RESULTS_FILE):
     # POA time without SIMD (estimated): measured SPOA time x assumed SIMD speedup
     df["time_poa_measured"] = df["time_poa"]
     df["time_poa"] = df["time_poa"] * POA_SIMD_SPEEDUP
-    print(f"  POA times scaled by x{POA_SIMD_SPEEDUP} to estimate no-SIMD runtime")
+    print(f"  POA times scaled by x{POA_SIMD_SPEEDUP} to estimate runtime")
     return df
 
 
@@ -134,7 +143,7 @@ def train(df, path=MODEL_FILE):
     models["c_dp"] = fit_time_constant(dp_work(train_df["volume"]), train_df["time_dp"])
     models["c_poa"] = fit_time_constant(poa_work(train_df["mean_len"]), train_df["time_poa"])
     print(f"\nc_dp  = {models['c_dp']:.3e} s per cell-move")
-    print(f"c_poa = {models['c_poa']:.3e} s per unit (N * L^2), no-SIMD estimate")
+    print(f"c_poa = {models['c_poa']:.3e} s per unit (N * L^2),  estimate")
 
     # Everything needed to use the model later
     models["feature_names"] = list(FEATURE_NAMES)
@@ -241,12 +250,19 @@ def labelled(df):
 # Figures and tables
 # ---------------------------------------------------------------------------
 
-def save(fig, name):
+def save(fig, name, dpi=1000):
+    """Save a figure as a greyscale 1000 dpi TIFF (LZW-compressed)."""
     os.makedirs(FIG_DIR, exist_ok=True)
-    for ext in ("png", "pdf"):
-        fig.savefig(os.path.join(FIG_DIR, f"{name}.{ext}"), bbox_inches="tight")
+    path = os.path.join(FIG_DIR, f"{name}.tiff")
+
+    buf = io.BytesIO()
+    fig.savefig(buf, dpi=dpi, format="png", bbox_inches="tight", facecolor="white")
     plt.close(fig)
-    print(f"Saved {FIG_DIR}/{name}.png/.pdf")
+    buf.seek(0)
+
+    img = Image.open(buf).convert("L")          # greyscale
+    img.save(path, format="TIFF", compression="tiff_lzw", dpi=(dpi, dpi))
+    print(f"Saved {path} ({dpi} dpi, greyscale)")
 
 
 def save_table(table, name):
@@ -303,9 +319,9 @@ def plot_pred_vs_true(models, df):
         ok = np.isfinite(y)
         y = y[ok].values
         pred = models[key].predict(test.loc[ok, FEATURE_NAMES].values)
-        ax.scatter(y, pred, s=8, alpha=0.35, color=COLORS["OPTIK"], edgecolors="none")
+        ax.scatter(y, pred, s=8, alpha=0.4, color="#333333", edgecolors="none")
         lo, hi = min(y.min(), pred.min()), max(y.max(), pred.max())
-        ax.plot([lo, hi], [lo, hi], color="#555555", lw=1, ls="--", label="perfect prediction")
+        ax.plot([lo, hi], [lo, hi], color="black", lw=1, ls="--", label="perfect prediction")
         ax.set_title(title)
         ax.set_xlabel("Measured")
         ax.set_ylabel("Predicted")
@@ -354,19 +370,21 @@ def plot_lambda_sweep(models, df, lams=(1e-4, 1e-3, 1e-2, 1e-1, 1, 10, 100)):
         sc, t = realized(d, ml_choices(models, d, lam))
         pts.append((t.sum(), sc.mean(), lam))
     pts = np.array(pts)
-    ax.plot(pts[:, 0], pts[:, 1], "-o", color=COLORS["OPTIK"], lw=2, ms=6, label=LABELS["OPTIK"])
+    ax.plot(pts[:, 0], pts[:, 1], "-", color=COLORS["OPTIK"], lw=2,
+            marker=MARKERS["OPTIK"], ms=6, mec="black", mew=0.7, label=LABELS["OPTIK"])
     for t, s, lam in pts:
         ax.annotate(f"λ={lam:g}", (t, s), textcoords="offset points", xytext=(5, -10), fontsize=7,
-                    color="#555555")
+                    color="#333333")
 
     for m in ["DP", "POA", "SECTION"]:
         sc, t = realized(d, np.full(len(d), m))
-        ax.scatter(t.sum(), sc.mean(), s=70, color=COLORS[m], zorder=3, label=f"Always {LABELS[m]}")
+        ax.scatter(t.sum(), sc.mean(), s=80, color=COLORS[m], marker=MARKERS[m],
+                   edgecolors="black", linewidths=0.8, zorder=3, label=f"Always {LABELS[m]}")
 
     ax.set_xscale("log")
     ax.set_xlabel("Total runtime on test set (s, log scale)")
     ax.set_ylabel("Mean score (fraction of optimum)")
-    ax.legend(frameon=False, fontsize=8, loc="lower right")
+    ax.legend(frameon=False, fontsize=8, loc="center right")
     fig.tight_layout()
     save(fig, "fig_lambda_sweep")
 
@@ -435,15 +453,17 @@ def plot_size_bars(models, df, lam=0.01, use_test_only=True, y_min=90):
 
     x = np.arange(len(sizes))
     w = 0.8 / len(METHODS)
+    bar_style = dict(edgecolor="black", linewidth=0.6, capsize=2,
+                     error_kw={"lw": 0.8, "ecolor": "black"})
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
     for k, m in enumerate(METHODS):
         sub = summary[summary["method"] == m].set_index("size").loc[sizes]
         pos = x - 0.4 + w / 2 + k * w
         axes[0].bar(pos, sub["time_mean"], w * 0.92, yerr=sub["time_sem"], color=COLORS[m],
-                    label=LABELS[m], capsize=2, error_kw={"lw": 0.8})
+                    hatch=HATCHES[m], label=LABELS[m], **bar_style)
         heights = np.maximum(sub["score_pct_mean"].values - y_min, 0)
         axes[1].bar(pos, heights, w * 0.92, bottom=y_min, yerr=sub["score_pct_sem"].values,
-                    color=COLORS[m], label=LABELS[m], capsize=2, error_kw={"lw": 0.8})
+                    color=COLORS[m], hatch=HATCHES[m], label=LABELS[m], **bar_style)
 
     for ax in axes:
         ax.set_xticks(x)
@@ -457,9 +477,6 @@ def plot_size_bars(models, df, lam=0.01, use_test_only=True, y_min=90):
     axes[1].set_ylabel("Score (% of optimum)")
     axes[1].set_title(f"(b) Score (y-axis from {y_min}%)")
     axes[0].legend(frameon=False, fontsize=8, ncol=2)
-
-    n_text = ",  ".join(f"{BIN_LABELS[s]} bp: n={int((d['size'] == s).sum())}" for s in sizes)
-    fig.text(0.5, -0.02, n_text, ha="center", fontsize=8, color="#555555")
     fig.tight_layout()
     save(fig, "fig_size_bars")
     print("\nSize summary\n", summary.to_string(index=False, float_format="%.4g"))
